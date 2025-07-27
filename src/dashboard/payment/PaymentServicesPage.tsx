@@ -25,7 +25,8 @@ import {
   Divider,
   useMediaQuery,
   Checkbox,
-  ListItemText
+  ListItemText,
+  Pagination
 } from "@mui/material";
 import AppSidebar from "../AppSidebar";
 import { collection, getDocs, addDoc, updateDoc, doc } from "firebase/firestore";
@@ -180,6 +181,10 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   // New: Product selection dialog state
   const [productSelectDialogOpen, setProductSelectDialogOpen] = useState(false);
   const [productSearch, setProductSearch] = useState("");
+
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
   // Filtered available products for selection dialog
   const availableProducts = products.filter(
@@ -433,22 +438,33 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   const uniqueCustomers = Array.from(new Set(records.map(r => r.customerName).filter(Boolean)));
   const uniqueServices = Array.from(new Set(records.map(r => r.serviceName).filter(Boolean)));
 
-  // Filtered records for table
-  const filteredRecords = records.filter(r => {
-    // Date filter
-    if (dateFrom && r.createdAt < new Date(dateFrom).setHours(0, 0, 0, 0)) return false;
-    if (dateTo && r.createdAt > new Date(dateTo).setHours(23, 59, 59, 999)) return false;
-    // Customer filter
-    if (customerFilter && r.customerName !== customerFilter) return false;
-    // Product filter
-    if (serviceFilter && r.serviceName !== serviceFilter) return false;
-    // Status filter
-    if (statusFilter === "paid" && !r.paid) return false;
-    if (statusFilter === "unpaid" && r.paid) return false;
-    // Search
-    if (searchCustomer && !r.customerName.toLowerCase().includes(searchCustomer.toLowerCase())) return false;
-    return true;
-  });
+  // Filtered records for table (sort by latest first)
+  const filteredRecords = records
+    .filter(r => {
+      // Date filter
+      if (dateFrom && r.createdAt < new Date(dateFrom).setHours(0, 0, 0, 0)) return false;
+      if (dateTo && r.createdAt > new Date(dateTo).setHours(23, 59, 59, 999)) return false;
+      // Customer filter
+      if (customerFilter && r.customerName !== customerFilter) return false;
+      // Product filter
+      if (serviceFilter && r.serviceName !== serviceFilter) return false;
+      // Status filter
+      if (statusFilter === "paid" && !r.paid) return false;
+      if (statusFilter === "unpaid" && r.paid) return false;
+      // Search
+      if (searchCustomer && !r.customerName.toLowerCase().includes(searchCustomer.toLowerCase())) return false;
+      return true;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt); // Latest first
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredRecords.length / rowsPerPage);
+  const paginatedRecords = filteredRecords.slice((page - 1) * rowsPerPage, page * rowsPerPage);
+
+  // Reset page if filters change or filteredRecords shrink
+  React.useEffect(() => {
+    setPage(1);
+  }, [searchCustomer, statusFilter, customerFilter, serviceFilter, dateFrom, dateTo, records.length]);
 
   return (
     <AppSidebar
@@ -637,7 +653,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredRecords.map(r => (
+              {paginatedRecords.map(r => (
                 <TableRow
                   key={r.id}
                   hover
@@ -697,6 +713,63 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             </TableBody>
           </Table>
         </TableContainer>
+        {/* Pagination controls */}
+        {filteredRecords.length > 0 && (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: { xs: "column", sm: "row" },
+              alignItems: { xs: "stretch", sm: "center" },
+              justifyContent: "space-between",
+              mt: 2,
+              gap: 2
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                Rows per page:
+              </Typography>
+              <Select
+                size="small"
+                value={rowsPerPage}
+                onChange={e => {
+                  setRowsPerPage(Number(e.target.value));
+                  setPage(1);
+                }}
+                sx={{ width: 80, borderRadius: 2, fontWeight: 500 }}
+              >
+                {[5, 10, 20, 50, 100].map(n => (
+                  <MenuItem key={n} value={n}>{n}</MenuItem>
+                ))}
+              </Select>
+            </Box>
+            <Pagination
+              count={totalPages}
+              page={page}
+              onChange={(_, value) => setPage(value)}
+              color="primary"
+              shape="rounded"
+              showFirstButton
+              showLastButton
+              siblingCount={isMobile ? 0 : 1}
+              boundaryCount={1}
+              sx={{
+                mx: "auto",
+                "& .MuiPaginationItem-root": {
+                  borderRadius: 2,
+                  fontWeight: 600,
+                  minWidth: 36,
+                  minHeight: 36,
+                }
+              }}
+            />
+            <Box sx={{ minWidth: 120, textAlign: { xs: "left", sm: "right" } }}>
+              <Typography variant="body2" color="text.secondary">
+                Page {page} of {totalPages}
+              </Typography>
+            </Box>
+          </Box>
+        )}
       </Box>
       {/* Add Product Sale Dialog */}
       <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} maxWidth="sm" fullWidth>

@@ -21,7 +21,10 @@ import {
   createTheme, // Import createTheme for consistency
   ThemeProvider, // Import ThemeProvider
   CssBaseline, // Import CssBaseline
-  CircularProgress // For loading states
+  CircularProgress, // For loading states
+  Pagination,
+  Select,
+  MenuItem
 } from "@mui/material";
 import AppSidebar from "./AppSidebar";
 import { collection, getDocs } from "firebase/firestore";
@@ -282,6 +285,13 @@ const DailySummaryPage: React.FC = () => {
   const isMobile = useMediaQuery(currentTheme.breakpoints.down("sm"));
   const navigate = useNavigate();
 
+  // Get role from localStorage (default to 'cashier')
+  const role = (localStorage.getItem("role") as "admin" | "cashier") || "cashier";
+
+  // Pagination state for today's transactions
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+
   const fetchPayments = async () => {
     setLoading(true);
     try {
@@ -358,10 +368,27 @@ const DailySummaryPage: React.FC = () => {
     visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" as const } },
   };
 
+  // Sort today's payments by latest first
+  const todaysPaymentsSorted = [...todaysPayments].sort((a, b) => b.createdAt - a.createdAt);
+
+  // Pagination logic
+  const totalPages = Math.ceil(todaysPaymentsSorted.length / rowsPerPage);
+  const paginatedPayments = todaysPaymentsSorted.slice((page - 1) * rowsPerPage, page * rowsPerPage);
+
+  // Reset page if today's payments change
+  React.useEffect(() => {
+    setPage(1);
+  }, [todaysPayments.length, rowsPerPage]);
+
+  // For admin: show total sales; for cashier: show only today's sales
+  const totalSales = role === "admin"
+    ? payments.filter(p => p.paid && !p.voided).reduce((sum, p) => sum + (typeof p.price === "number" ? p.price : 0), 0)
+    : todaySales;
+
   return (
-    <ThemeProvider theme={theme}> {/* Apply the custom theme */}
-      <CssBaseline /> {/* Apply base CSS for consistent styling */}
-      <AppSidebar role="cashier" onLogout={handleLogout}>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AppSidebar role={role} onLogout={handleLogout}>
         <Box sx={{ p: { xs: 2, sm: 4 }, maxWidth: 1100, mx: "auto", width: "100%" }}>
           {/* Header Section */}
           <motion.div
@@ -447,10 +474,10 @@ const DailySummaryPage: React.FC = () => {
                   <MonetizationOnIcon color="success" sx={{ fontSize: 40 }} /> {/* Larger icon */}
                   <Box>
                     <Typography variant="subtitle1" color="text.secondary" fontWeight={500}>
-                      Total Sales (Paid)
+                      {role === "admin" ? "Total Sales (Paid)" : "Today's Sales"}
                     </Typography>
                     <Typography variant="h5" fontWeight={700} color={currentTheme.palette.success.dark}>
-                      {loading ? <Skeleton width={100} /> : peso(todaySales)}
+                      {loading ? <Skeleton width={100} /> : peso(totalSales)}
                     </Typography>
                   </Box>
                 </CardContent>
@@ -613,7 +640,7 @@ const DailySummaryPage: React.FC = () => {
                             <Typography sx={{ mt: 2, color: "text.secondary" }}>Loading Transactions...</Typography>
                           </TableCell>
                         </TableRow>
-                      ) : todaysPayments.length === 0 ? (
+                      ) : todaysPaymentsSorted.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={7} align="center">
                             <Typography color="text.secondary" sx={{ py: 3 }}>
@@ -622,9 +649,10 @@ const DailySummaryPage: React.FC = () => {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        todaysPayments.map((r) => (
-                          Array.isArray(r.products) && r.products.length > 0 ? (
-                            r.products.map((prod, idx) => (
+                      paginatedPayments.map((r) =>
+                        Array.isArray(r.products) && r.products.length > 0 ? (
+                          <React.Fragment key={r.id}>
+                            {r.products.map((prod, idx) => (
                               <TableRow
                                 key={r.id + "-" + (prod.productId || idx)}
                                 hover
@@ -679,68 +707,125 @@ const DailySummaryPage: React.FC = () => {
                                   </Typography>
                                 </TableCell>
                               </TableRow>
-                            ))
-                          ) : (
-                            <TableRow
-                              key={r.id}
-                              hover
-                              sx={{
-                                '&:last-child td': { borderBottom: 0 },
-                                bgcolor: r.voided ? currentTheme.palette.error.light : (r.paid ? "transparent" : currentTheme.palette.action.hover),
-                                opacity: r.voided ? 0.7 : 1,
-                                textDecoration: r.voided ? "line-through" : "none",
-                                transition: "background-color 0.2s ease-in-out, opacity 0.2s ease-in-out",
-                              }}
-                            >
-                              <TableCell>
-                                <Typography fontWeight={600}>{r.customerName}</Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  {r.cashierFullName || r.cashier}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>{getProductOrService(r)}</TableCell>
-                              <TableCell>{r.quantity || 1}</TableCell>
-                              <TableCell>
-                                <Typography fontWeight={500}>{peso(r.price)}</Typography>
-                              </TableCell>
-                              <TableCell>
-                                {r.voided ? (
-                                  <Chip label="Voided" color="error" size="small" sx={{ fontWeight: 600 }} />
-                                ) : (
-                                  <Chip
-                                    label={r.paid ? "Paid" : "Unpaid"}
-                                    color={r.paid ? "success" : "warning"}
-                                    size="small"
-                                    variant={r.paid ? "filled" : "outlined"}
-                                    sx={{ fontWeight: 600 }}
-                                  />
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {r.paymentMethod ? (
-                                  <Chip
-                                    label={r.paymentMethod.charAt(0).toUpperCase() + r.paymentMethod.slice(1)}
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{ fontWeight: 600 }}
-                                  />
-                                ) : (
-                                  "-"
-                                )}
-                              </TableCell>
-                              <TableCell sx={{ minWidth: 120 }}>
-                                <Typography>{new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  {new Date(r.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                                </Typography>
-                              </TableCell>
-                            </TableRow>
-                          )
-                        ))
-                      )}
+                            ))}
+                          </React.Fragment>
+                        ) : (
+                          <TableRow
+                            key={r.id}
+                            hover
+                            sx={{
+                              '&:last-child td': { borderBottom: 0 },
+                              bgcolor: r.voided ? currentTheme.palette.error.light : (r.paid ? "transparent" : currentTheme.palette.action.hover),
+                              opacity: r.voided ? 0.7 : 1,
+                              textDecoration: r.voided ? "line-through" : "none",
+                              transition: "background-color 0.2s ease-in-out, opacity 0.2s ease-in-out",
+                            }}
+                          >
+                            <TableCell>
+                              <Typography fontWeight={600}>{r.customerName}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                {r.cashierFullName || r.cashier}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>{getProductOrService(r)}</TableCell>
+                            <TableCell>{r.quantity || 1}</TableCell>
+                            <TableCell>
+                              <Typography fontWeight={500}>{peso(r.price)}</Typography>
+                            </TableCell>
+                            <TableCell>
+                              {r.voided ? (
+                                <Chip label="Voided" color="error" size="small" sx={{ fontWeight: 600 }} />
+                              ) : (
+                                <Chip
+                                  label={r.paid ? "Paid" : "Unpaid"}
+                                  color={r.paid ? "success" : "warning"}
+                                  size="small"
+                                  variant={r.paid ? "filled" : "outlined"}
+                                  sx={{ fontWeight: 600 }}
+                                />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {r.paymentMethod ? (
+                                <Chip
+                                  label={r.paymentMethod.charAt(0).toUpperCase() + r.paymentMethod.slice(1)}
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{ fontWeight: 600 }}
+                                />
+                              ) : (
+                                "-"
+                              )}
+                            </TableCell>
+                            <TableCell sx={{ minWidth: 120 }}>
+                              <Typography>{new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                {new Date(r.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      ))}
                     </TableBody>
                   </Table>
                 </TableContainer>
+                {/* Pagination controls */}
+                {!loading && todaysPaymentsSorted.length > 0 && (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: { xs: "column", sm: "row" },
+                      alignItems: { xs: "stretch", sm: "center" },
+                      justifyContent: "space-between",
+                      mt: 2,
+                      gap: 2
+                    }}
+                  >
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Rows per page:
+                      </Typography>
+                      <Select
+                        size="small"
+                        value={rowsPerPage}
+                        onChange={e => {
+                          setRowsPerPage(Number(e.target.value));
+                          setPage(1);
+                        }}
+                        sx={{ width: 80, borderRadius: 2, fontWeight: 500 }}
+                      >
+                        {[5, 10, 20, 50, 100].map(n => (
+                          <MenuItem key={n} value={n}>{n}</MenuItem>
+                        ))}
+                      </Select>
+                    </Box>
+                    <Pagination
+                      count={totalPages}
+                      page={page}
+                      onChange={(_, value) => setPage(value)}
+                      color="primary"
+                      shape="rounded"
+                      showFirstButton
+                      showLastButton
+                      siblingCount={isMobile ? 0 : 1}
+                      boundaryCount={1}
+                      sx={{
+                        mx: "auto",
+                        "& .MuiPaginationItem-root": {
+                          borderRadius: 2,
+                          fontWeight: 600,
+                          minWidth: 36,
+                          minHeight: 36,
+                        }
+                      }}
+                    />
+                    <Box sx={{ minWidth: 120, textAlign: { xs: "left", sm: "right" } }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Page {page} of {totalPages}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </motion.div>
