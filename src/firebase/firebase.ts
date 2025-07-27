@@ -2,12 +2,12 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
- apiKey: "AIzaSyDXTQalxF7I_uSQHJuRsq1F9jShNaK1Fec",
-  authDomain: "oms-taguig.firebaseapp.com",
-  projectId: "oms-taguig",
-  storageBucket: "oms-taguig.firebasestorage.app",
-  messagingSenderId: "887397394598",
-  appId: "1:887397394598:web:048c6ecdf30e63aa7c6c67"
+ apiKey: "AIzaSyBkuiZCqrADfom5TXNBfg4gx0YdYNGQOxQ",
+  authDomain: "opengmilitarysupplies.firebaseapp.com",
+  projectId: "opengmilitarysupplies",
+  storageBucket: "opengmilitarysupplies.firebasestorage.app",
+  messagingSenderId: "178476385669",
+  appId: "1:178476385669:web:a81a040077cced2f1e30ec"
 };
 
 const app = initializeApp(firebaseConfig);
