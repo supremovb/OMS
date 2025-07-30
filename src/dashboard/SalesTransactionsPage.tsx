@@ -352,14 +352,105 @@ const SalesTransactionsPage: React.FC = () => {
     fetchRecords();
   }, []);
 
-  // Unique products for filter dropdown (include both productName and serviceName for legacy support)
+  // Calculate today's date string for comparison
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  // Only show today's records for everything (stats, table, filters)
+  const todaysRecords = records.filter(
+    r => format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
+  );
+
+  // Unique products for filter dropdown (today only)
   const uniqueProducts = Array.from(
     new Set(
-      records
+      todaysRecords
         .map(r => r.productName || r.serviceName)
         .filter(Boolean)
     )
   );
+
+  // Quick stats (today only)
+  const totalSales = todaysRecords
+    .filter(r => r.paid && !r.voided)
+    .reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0);
+
+  const paidCount = todaysRecords.filter(r => r.paid && !r.voided).length;
+  const unpaidCount = todaysRecords.filter(r => !r.paid && !r.voided).length;
+
+  // Filtered records for table (today only)
+  const filteredRecords = todaysRecords
+    .filter(r => {
+      const customerMatch = r.customerName.toLowerCase().includes(searchCustomer.toLowerCase());
+      let statusMatch = true;
+      if (statusFilter === "paid") {
+        statusMatch = !!r.paid && !r.voided;
+      } else if (statusFilter === "unpaid") {
+        statusMatch = !r.paid && !r.voided;
+      } else if (statusFilter === "voided") {
+        statusMatch = !!r.voided;
+      }
+      // Product filter: check both productName and serviceName for legacy/compatibility
+      const productName = r.productName || r.serviceName || "";
+      const productMatch = productFilter ? productName === productFilter : true;
+      const dateMatch = dateFilter
+        ? format(new Date(r.createdAt), 'yyyy-MM-dd') === dateFilter
+        : true;
+      return customerMatch && productMatch && dateMatch && statusMatch;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt); // Sort by latest
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredRecords.length / rowsPerPage);
+  const paginatedRecords = filteredRecords.slice((page - 1) * rowsPerPage, page * rowsPerPage);
+
+  // Reset page if filters change or filteredRecords shrink
+  useEffect(() => {
+    setPage(1);
+  }, [searchCustomer, statusFilter, productFilter, dateFilter, records.length]);
+
+  // Checkbox selection logic
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const allSelectableIds = filteredRecords.filter(r => r.id).map(r => r.id!) as string[];
+  const allSelected = allSelectableIds.length > 0 && allSelectableIds.every(id => selectedIds.includes(id));
+
+  // Get role from localStorage (default to 'cashier' for backward compatibility)
+  const role = (localStorage.getItem("role") as "admin" | "cashier") || "cashier";
+
+  // Logout handler
+  const handleLogout = () => {
+    localStorage.clear();
+    navigate("/login", { replace: true });
+  };
+
+  // Framer Motion variants for staggered animations
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1,
+      },
+    },
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" as const } },
+  };
+
+  // Add row click handler to show details dialog
+  // TableRow click handler: only open details dialog if not clicking the Void button
+  const handleRowClick = (record: PaymentRecord, event?: React.MouseEvent) => {
+    // If event exists and originated from a button, do nothing
+    if (event && (event.target as HTMLElement).closest('button')) return;
+    setSelectedRecord(record);
+    setDetailsDialogOpen(true);
+  }
 
   // Handler to void a transaction (show confirmation dialog)
   // FIX: Do NOT open transaction details dialog when voiding
@@ -418,117 +509,6 @@ const SalesTransactionsPage: React.FC = () => {
       setDeleteDialogOpen(false);
     }
   };
-
-  // Filtered records (sort by latest first)
-  const filteredRecords = records
-    .filter(r => {
-      const customerMatch = r.customerName.toLowerCase().includes(searchCustomer.toLowerCase());
-      // Remove plateMatch
-      // const plateMatch = r.plateNumber?.toLowerCase().includes(searchPlate.toLowerCase());
-
-      let statusMatch = true;
-      if (statusFilter === "paid") {
-        statusMatch = !!r.paid && !r.voided;
-      } else if (statusFilter === "unpaid") {
-        statusMatch = !r.paid && !r.voided;
-      } else if (statusFilter === "voided") {
-        statusMatch = !!r.voided;
-      } else {
-        statusMatch = true;
-      }
-
-      // Product filter: check both productName and serviceName for legacy/compatibility
-      const productName = r.productName || r.serviceName || "";
-      const productMatch = productFilter ? productName === productFilter : true;
-      const dateMatch = dateFilter
-        ? format(new Date(r.createdAt), 'yyyy-MM-dd') === dateFilter
-        : true;
-
-      return customerMatch && productMatch && dateMatch && statusMatch;
-    })
-    .sort((a, b) => b.createdAt - a.createdAt); // Sort by latest
-
-  // Pagination logic
-  const totalPages = Math.ceil(filteredRecords.length / rowsPerPage);
-  const paginatedRecords = filteredRecords.slice((page - 1) * rowsPerPage, page * rowsPerPage);
-
-  // Reset page if filters change or filteredRecords shrink
-  useEffect(() => {
-    setPage(1);
-  }, [searchCustomer, statusFilter, productFilter, dateFilter, records.length]);
-
-  // Checkbox selection logic
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
-
-  const allSelectableIds = filteredRecords.filter(r => r.id).map(r => r.id!) as string[];
-  const allSelected = allSelectableIds.length > 0 && allSelectableIds.every(id => selectedIds.includes(id));
-
-  // Get role from localStorage (default to 'cashier' for backward compatibility)
-  const role = (localStorage.getItem("role") as "admin" | "cashier") || "cashier";
-
-  // Calculate today's date string for comparison
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
-
-  // Quick stats
-  const totalSales = role === "admin"
-    ? records.filter(r => r.paid && !r.voided).reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0)
-    : records.filter(r =>
-        r.paid &&
-        !r.voided &&
-        format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
-      ).reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0);
-
-  // Paid/unpaid counts: for cashier, only today's; for admin, all-time
-  const paidCount = role === "admin"
-    ? records.filter(r => r.paid && !r.voided).length
-    : records.filter(r =>
-        r.paid &&
-        !r.voided &&
-        format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
-      ).length;
-
-  const unpaidCount = role === "admin"
-    ? records.filter(r => !r.paid && !r.voided).length
-    : records.filter(r =>
-        !r.paid &&
-        !r.voided &&
-        format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
-      ).length;
-
-  // Logout handler
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate("/login", { replace: true });
-  };
-
-  // Framer Motion variants for staggered animations
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.1,
-      },
-    },
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" as const } },
-  };
-
-  // Add row click handler to show details dialog
-  // TableRow click handler: only open details dialog if not clicking the Void button
-  const handleRowClick = (record: PaymentRecord, event?: React.MouseEvent) => {
-    // If event exists and originated from a button, do nothing
-    if (event && (event.target as HTMLElement).closest('button')) return;
-    setSelectedRecord(record);
-    setDetailsDialogOpen(true);
-  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -621,13 +601,13 @@ const SalesTransactionsPage: React.FC = () => {
                   </Avatar>
                   <Box>
                     <Typography variant="subtitle1" color="text.secondary" fontWeight={500}>
-                      {role === "admin" ? "Total Sales (Paid)" : "Today's Sales"}
+                      Today's Sales
                     </Typography>
                     <Typography variant="h5" fontWeight={700} color={currentTheme.palette.success.dark}>
                       {loading ? <CircularProgress size={24} /> : peso(totalSales)}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {role === "admin" ? "All time" : "Today"}
+                      Today
                     </Typography>
                   </Box>
                 </CardContent>

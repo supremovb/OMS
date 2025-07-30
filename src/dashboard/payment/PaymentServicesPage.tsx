@@ -417,11 +417,21 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     }
   };
 
-  // Stats
-  const totalPayments = records.length;
-  const totalPaid = records.filter(r => r.paid).length;
-  const totalUnpaid = records.filter(r => !r.paid).length;
-  const totalSales = records.filter(r => r.paid).reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0);
+  // Today's date string for filtering
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  // Daily records only (for stats and table)
+  const dailyRecords = records.filter(
+    r => format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
+  );
+
+  // Stats: daily only
+  const totalPayments = dailyRecords.length;
+  const totalPaid = dailyRecords.filter(r => r.paid && !r.voided).length;
+  const totalUnpaid = dailyRecords.filter(r => !r.paid && !r.voided).length;
+  const totalSales = dailyRecords
+    .filter(r => r.paid && !r.voided)
+    .reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0);
 
   // Most availed services (top 3)
   const serviceCount: { [serviceName: string]: number } = {};
@@ -434,12 +444,12 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
 
-  // Unique customers and products for filter dropdowns
-  const uniqueCustomers = Array.from(new Set(records.map(r => r.customerName).filter(Boolean)));
-  const uniqueServices = Array.from(new Set(records.map(r => r.serviceName).filter(Boolean)));
+  // Unique customers and products for filter dropdowns (daily only)
+  const uniqueCustomers = Array.from(new Set(dailyRecords.map(r => r.customerName).filter(Boolean)));
+  const uniqueServices = Array.from(new Set(dailyRecords.map(r => r.serviceName).filter(Boolean)));
 
-  // Filtered records for table (sort by latest first)
-  const filteredRecords = records
+  // Filtered records for table (sort by latest first, daily only)
+  const filteredRecords = dailyRecords
     .filter(r => {
       // Date filter
       if (dateFrom && r.createdAt < new Date(dateFrom).setHours(0, 0, 0, 0)) return false;
@@ -449,8 +459,8 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
       // Product filter
       if (serviceFilter && r.serviceName !== serviceFilter) return false;
       // Status filter
-      if (statusFilter === "paid" && !r.paid) return false;
-      if (statusFilter === "unpaid" && r.paid) return false;
+      if (statusFilter === "paid" && (!r.paid || r.voided)) return false;
+      if (statusFilter === "unpaid" && (r.paid || r.voided)) return false;
       // Search
       if (searchCustomer && !r.customerName.toLowerCase().includes(searchCustomer.toLowerCase())) return false;
       return true;
@@ -483,7 +493,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           }}>
             <PaymentIcon color="primary" sx={{ fontSize: 36 }} />
             <Box>
-              <Typography variant="subtitle2" color="text.secondary">Total Transactions</Typography>
+              <Typography variant="subtitle2" color="text.secondary">Transactions Today</Typography>
               <Typography variant="h6" fontWeight={700}>{totalPayments}</Typography>
             </Box>
           </Paper>
@@ -493,7 +503,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           }}>
             <PaidIcon color="success" sx={{ fontSize: 36 }} />
             <Box>
-              <Typography variant="subtitle2" color="text.secondary">Total Sales</Typography>
+              <Typography variant="subtitle2" color="text.secondary">Sales Today</Typography>
               <Typography variant="h6" fontWeight={700}>{peso(totalSales)}</Typography>
             </Box>
           </Paper>
@@ -503,7 +513,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           }}>
             <AttachMoneyIcon color="primary" sx={{ fontSize: 36 }} />
             <Box>
-              <Typography variant="subtitle2" color="text.secondary">Paid</Typography>
+              <Typography variant="subtitle2" color="text.secondary">Paid Today</Typography>
               <Typography variant="h6" fontWeight={700}>{totalPaid}</Typography>
             </Box>
           </Paper>
@@ -513,7 +523,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           }}>
             <MoneyOffIcon color="warning" sx={{ fontSize: 36 }} />
             <Box>
-              <Typography variant="subtitle2" color="text.secondary">Unpaid</Typography>
+              <Typography variant="subtitle2" color="text.secondary">Unpaid Today</Typography>
               <Typography variant="h6" fontWeight={700}>{totalUnpaid}</Typography>
             </Box>
           </Paper>
