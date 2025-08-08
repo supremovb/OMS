@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Box,
   Typography,
@@ -26,11 +26,12 @@ import {
   useMediaQuery,
   Checkbox,
   ListItemText,
-  Pagination
+  Pagination,
+  CircularProgress
 } from "@mui/material";
 import AppSidebar from "../AppSidebar";
 import { collection, getDocs, addDoc, updateDoc, doc } from "firebase/firestore";
-import { db } from "../../firebase/firebase";
+import { db, isOnline } from "../../firebase/firebase";
 import { useTheme } from "@mui/material/styles";
 import Autocomplete from "@mui/material/Autocomplete";
 import PaymentIcon from "@mui/icons-material/PointOfSale";
@@ -46,6 +47,7 @@ import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import { format } from "date-fns";
 import { reduceProductStock } from "../services/ServiceManagementPage"; // Import stock reducer
 import { Grid } from "@mui/material";
+import { setLocal, queueSync, getAllLocal, isSyncing, onSyncStatus } from "../../utils/offlineSync";
 
 const VARIETIES = [
   { key: "motor", label: "Motor" },
@@ -153,7 +155,8 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   const [records, setRecords] = useState<PaymentRecord[]>([]);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" as "success" | "error" });
+  const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" as "success" | "error" | "info" });
+  const snackbarPending = useRef<{ open: boolean; message: string; severity: "success" | "error" | "info" } | null>(null);
 
   // New: Multi-product sale state
   const [selectedProducts, setSelectedProducts] = useState<{ productId: string; quantity: number }[]>([]);
@@ -198,26 +201,123 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
+  // Syncing state
+  const [syncing, setSyncing] = useState(isSyncing());
+
+  // Listen for offline sync status and refresh records after sync
+  useEffect(() => {
+    const handler = (status: "start" | "end") => {
+      setSyncing(status === "start");
+      if (status === "end" && isOnline()) {
+        fetchRecords(true);
+      }
+    };
+    onSyncStatus(handler);
+    setSyncing(isSyncing());
+    // Listen for browser online event to show sync loading immediately
+    const onlineHandler = () => {
+      setSyncing(true); // Always show loading immediately when going online
+      // Force a re-check of syncing state after a short delay (in case sync is very fast)
+      setTimeout(() => setSyncing(isSyncing()), 500);
+    };
+    window.addEventListener("online", onlineHandler);
+    return () => {
+      window.removeEventListener("online", onlineHandler);
+    };
+  }, []);
+
+  // --- NEW: force update to trigger re-render for snackbar and dialog close in offline mode ---
+  const [, forceUpdate] = useState(0);
+
+  // --- FIX: Always show snackbar after dialogs close, if one is pending ---
+  useEffect(() => {
+    if (snackbarPending.current && !addDialogOpen && !processDialogOpen) {
+      setSnackbar(snackbarPending.current);
+      snackbarPending.current = null;
+    }
+    // eslint-disable-next-line
+  }, [addDialogOpen, processDialogOpen]);
+
+  // --- FIX: Show snackbar and close dialogs immediately in offline mode ---
+  useEffect(() => {
+    if (snackbar.open && (addDialogOpen || processDialogOpen)) {
+      setAddDialogOpen(false);
+      setProcessDialogOpen(false);
+      // force re-render to ensure dialog closes and snackbar shows
+      setTimeout(() => forceUpdate(v => v + 1), 0);
+    }
+    // eslint-disable-next-line
+  }, [snackbar.open]);
+
+  // --- FIX: Always show sync overlay when syncing, even after going online ---
+  useEffect(() => {
+    const handler = (status: "start" | "end") => {
+      setSyncing(status === "start");
+      if (status === "end" && isOnline()) {
+        fetchRecords(true);
+      }
+    };
+    onSyncStatus(handler);
+    setSyncing(isSyncing());
+    // Listen for browser online event to show sync loading immediately
+    const onlineHandler = () => {
+      setSyncing(true); // Always show loading immediately when going online
+      setTimeout(() => setSyncing(isSyncing()), 500);
+    };
+    window.addEventListener("online", onlineHandler);
+    return () => {
+      window.removeEventListener("online", onlineHandler);
+    };
+  }, []);
+
   useEffect(() => {
     fetchProducts();
     fetchRecords();
     fetchLoyaltyCustomers();
   }, []);
 
+  // Fetch loyalty customers from Firestore
+  const fetchLoyaltyCustomers = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "loyaltyCustomers"));
+      setLoyaltyCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as LoyaltyCustomer[]);
+    } catch (error) {
+      setLoyaltyCustomers([]);
+    }
+  };
+
   const fetchProducts = async () => {
     const snapshot = await getDocs(collection(db, "products"));
     setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Product[]);
   };
 
-  const fetchRecords = async () => {
-    const snapshot = await getDocs(collection(db, "payments"));
-    setRecords(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as PaymentRecord[]);
-  };
-
-  // Fetch loyalty customers for selection
-  const fetchLoyaltyCustomers = async () => {
-    const snapshot = await getDocs(collection(db, "loyalty_customers"));
-    setLoyaltyCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as LoyaltyCustomer[]);
+  // fetchRecords: add clearLocal option to clear offline cache after sync
+  const fetchRecords = async (clearLocal = false) => {
+    if (isOnline()) {
+      const snapshot = await getDocs(collection(db, "payments"));
+      const firestoreRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as PaymentRecord[];
+      setRecords(firestoreRecords);
+      if (clearLocal) {
+        // Remove all offline records that start with 'offline-'
+        const localRecords = await getAllLocal("payments");
+        for (const rec of localRecords) {
+          if (rec.id && typeof rec.id === "string" && rec.id.startsWith("offline-")) {
+            await setLocal("payments", { ...rec, deleted: true }); // Mark as deleted
+          }
+        }
+        // Optionally, actually delete them:
+        // for (const rec of localRecords) {
+        //   if (rec.id && typeof rec.id === "string" && rec.id.startsWith("offline-")) {
+        //     await deleteLocal("payments", rec.id);
+        //   }
+        // }
+      }
+    } else {
+      let localRecords = await getAllLocal("payments");
+      // Filter out deleted/cleared records
+      localRecords = localRecords.filter((rec: any) => !rec.deleted);
+      setRecords(localRecords as PaymentRecord[]);
+    }
   };
 
   // Calculate total price for all selected products
@@ -320,6 +420,11 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
       } catch { /* fallback to props */ }
 
       if (payingRecordId && selectedRecord) {
+        // Only allow updating unpaid record online (for simplicity)
+        if (!isOnline()) {
+          setSnackbar({ open: true, message: "Cannot process unpaid record offline.", severity: "error" });
+          return;
+        }
         // Update the existing unpaid record to mark as paid
         await updateDoc(doc(db, "payments", payingRecordId), {
           paid: true,
@@ -341,16 +446,18 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           }
         }
 
-        setSnackbar({ open: true, message: "Payment recorded!", severity: "success" });
+        snackbarPending.current = { open: true, message: "Payment recorded!", severity: "success" };
       } else {
         // Create new record (normal flow)
+        const now = Date.now();
+        // Remove the id field from the record when adding online!
         const record: PaymentRecord = {
           customerName,
           carName: "",
           plateNumber: "",
           variety: "",
-          serviceId: "", // Not used for multi-product
-          serviceName: "", // Not used for multi-product
+          serviceId: "",
+          serviceName: "",
           price: totalPrice,
           cashier,
           cashierFullName,
@@ -362,21 +469,49 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             amountTendered: typeof amountTendered === "number" ? amountTendered : undefined,
             change: typeof amountTendered === "number" ? amountTendered - totalPrice : undefined
           }),
-          products: productsDetails
+          products: productsDetails,
+          // id: isOnline() ? undefined : `offline-${now}-${Math.floor(Math.random() * 100000)}` // <-- REMOVE id for online
         };
 
-        await addDoc(collection(db, "payments"), record);
-
-        // Reduce stock for each product sold
-        for (const prod of productsDetails) {
-          if (prod.productId && prod.quantity > 0) {
-            await reduceProductStock(prod.productId, prod.quantity);
-          }
+        if (isOnline()) {
+          await addDoc(collection(db, "payments"), record);
+          snackbarPending.current = { open: true, message: payLater ? "Products recorded as unpaid." : "Payment recorded!", severity: "success" };
+        } else {
+          // For offline, add id field
+          const offlineRecord = { ...record, id: `offline-${now}-${Math.floor(Math.random() * 100000)}` };
+          await setLocal("payments", offlineRecord);
+          await queueSync("add", "payments", offlineRecord);
+          // IMMEDIATELY show snackbar and close dialogs in offline mode
+          setSnackbar({
+            open: true,
+            message: "Sale added offline. It will be synced when you are online.",
+            severity: "info"
+          });
+          setAddDialogOpen(false);
+          setProcessDialogOpen(false);
+          setPayLater(false);
+          setPayingRecordId(null);
+          setSelectedProducts([]);
+          setSelectedCustomer(null);
+          setCustomerInput("");
+          setFormPaymentMethod(PAYMENT_METHODS[0].key);
+          setAmountTendered("");
+          setChange(0);
+          fetchRecords();
+          setTimeout(() => forceUpdate(v => v + 1), 0);
+          return;
         }
 
-        setSnackbar({ open: true, message: payLater ? "Products recorded as unpaid." : "Payment recorded!", severity: "success" });
+        // Reduce stock for each product sold (only online, or optionally offline if you have offline stock logic)
+        if (isOnline()) {
+          for (const prod of productsDetails) {
+            if (prod.productId && prod.quantity > 0) {
+              await reduceProductStock(prod.productId, prod.quantity);
+            }
+          }
+        }
       }
-
+      // Close dialogs and reset state AFTER snackbar is set (for online mode)
       setAddDialogOpen(false);
       setProcessDialogOpen(false);
       setPayLater(false);
@@ -484,6 +619,29 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
       onLogout={onLogout}
       onProfile={onProfile}
     >
+      {/* Sync loading overlay */}
+      {syncing && (
+        <Box
+          sx={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            bgcolor: "rgba(255,255,255,0.7)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "column"
+          }}
+        >
+          <CircularProgress color="primary" size={48} />
+          <Typography variant="h6" color="primary" sx={{ mt: 2 }}>
+            Syncing offline sales data...
+          </Typography>
+        </Box>
+      )}
       <Box sx={{ maxWidth: 900, mx: "auto", mt: 2, px: { xs: 1, sm: 2 }, pb: 6 }}>
         {/* Stats Section */}
         <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
@@ -641,7 +799,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           <Button
             variant="outlined"
             color="primary"
-            onClick={fetchRecords}
+            onClick={() => fetchRecords()}
             sx={{ ml: "auto", borderRadius: 2, minWidth: 44, px: 2, py: 1 }}
             startIcon={<RefreshIcon />}
           >

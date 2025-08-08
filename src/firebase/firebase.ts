@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
+
 
 const firebaseConfig = {
 apiKey: "AIzaSyBkuiZCqrADfom5TXNBfg4gx0YdYNGQOxQ",
@@ -12,3 +13,9 @@ apiKey: "AIzaSyBkuiZCqrADfom5TXNBfg4gx0YdYNGQOxQ",
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+
+// Enable Firestore offline persistence
+enableIndexedDbPersistence(db).catch(() => {});
+
+// Helper for online status
+export const isOnline = () => window.navigator.onLine;  

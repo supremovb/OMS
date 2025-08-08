@@ -42,7 +42,8 @@ import {
   TrendingUp as TrendingUpIcon,
   Star as StarIcon,
   TableChart as TableChartIcon,
-  Refresh as RefreshIcon, // Added RefreshIcon for the main refresh button
+  Refresh as RefreshIcon,
+  AccountBalanceWallet as AccountBalanceWalletIcon, // <-- Add this for Net Income
 } from "@mui/icons-material";
 import { motion } from "framer-motion";
 
@@ -449,6 +450,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return sum + (typeof p.price === "number" ? p.price : 0);
   }, 0);
 
+  // Helper: Map productId to cost for fast lookup
+  const productCostMap = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    products.forEach((p: any) => {
+      if (p.id && typeof p.cost === "number") map[p.id] = p.cost;
+    });
+    return map;
+  }, [products]);
+
+  // Calculate total cost of goods sold (COGS)
+  const totalCostOfGoodsSold = allPaidNonVoided.reduce((sum, p) => {
+    if (Array.isArray((p as any).products) && (p as any).products.length > 0) {
+      return sum + (p as any).products.reduce((s: number, prod: any) => {
+        const cost = productCostMap[prod.productId] || 0;
+        return s + cost * (prod.quantity || 0);
+      }, 0);
+    }
+    // For legacy/single-product, skip (no productId/cost info)
+    return sum;
+  }, 0);
+
+  // Net income = total sales - total cost
+  const netIncome = overallSales - totalCostOfGoodsSold;
+
   // Total products (from products collection)
   const totalProducts = products.length;
 
@@ -658,8 +683,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }
 
   return (
-    <ThemeProvider theme={theme}> {/* Apply the custom theme */}
-      <CssBaseline /> {/* Apply base CSS for consistent styling */}
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
       <AppSidebar
         role="admin"
         onLogout={onLogout}
@@ -748,6 +773,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 value={peso(overallSales)}
                 loading={loading}
                 color="success"
+              />
+            </motion.div>
+            <motion.div variants={itemVariants}>
+              <StatCard
+                icon={<AccountBalanceWalletIcon />}
+                title="Net Income"
+                value={peso(netIncome)}
+                loading={loading}
+                color="primary"
               />
             </motion.div>
             <motion.div variants={itemVariants}>

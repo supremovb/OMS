@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { getUserByUsername } from "../firebase/firestoreHelpers";
+import { getAllLocal } from "../utils/offlineSync";
 import {
   Box,
   Button,
@@ -193,6 +194,7 @@ const LoginForm: React.FC<LoginFormProps> = () => {
     if (storedRole === "cashier") navigate("/cashier");
   }, [navigate]);
 
+  // Try offline login if not online
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -201,10 +203,32 @@ const LoginForm: React.FC<LoginFormProps> = () => {
     setForgotPasswordAlertOpen(false);
 
     try {
-      const userDocRaw = await getUserByUsername(username);
+      let userDocRaw: UserDoc | undefined = undefined;
+      // Try online first
+      try {
+        const userResult = await getUserByUsername(username) as UserDoc | null;
+        if (
+          userResult !== null &&
+          typeof userResult.username === "string" &&
+          typeof userResult.password === "string" &&
+          typeof userResult.role === "string"
+        ) {
+          userDocRaw = userResult;
+        }
+      } catch {
+        // ignore error, fallback to offline
+      }
+
+      // If offline or user not found online, try local cache
+      if (!userDocRaw) {
+        const localUsers = await getAllLocal("employees");
+        userDocRaw = localUsers.find((u: any) => u.username === username);
+      }
+
       if (!userDocRaw) {
         setError("Invalid username or password. Please try again.");
         setSnackbarOpen(true);
+        setLoading(false);
         return;
       }
 
@@ -215,6 +239,7 @@ const LoginForm: React.FC<LoginFormProps> = () => {
           "Your account is still pending approval. Please wait for an administrator to activate your account."
         );
         setSnackbarOpen(true);
+        setLoading(false);
         return;
       }
       if (userDoc.status === "disabled") {
@@ -222,6 +247,7 @@ const LoginForm: React.FC<LoginFormProps> = () => {
           "Your account has been disabled. Please contact the administrator for assistance."
         );
         setSnackbarOpen(true);
+        setLoading(false);
         return;
       }
       if (userDoc.status && userDoc.status !== "active") {
@@ -229,18 +255,28 @@ const LoginForm: React.FC<LoginFormProps> = () => {
           `Your account status is "${userDoc.status}". Please contact the administrator.`
         );
         setSnackbarOpen(true);
+        setLoading(false);
         return;
       }
 
-      const passwordMatch = await new Promise<boolean>((resolve) => {
-        bcrypt.compare(password, userDoc.password, (err, res) => {
-          resolve(res === true);
+      // Password check (bcrypt for online, fallback to plain for offline cache)
+      let passwordMatch = false;
+      if (userDoc.password && userDoc.password.startsWith("$2")) {
+        // bcrypt hash
+        passwordMatch = await new Promise<boolean>((resolve) => {
+          bcrypt.compare(password, userDoc.password, (err, res) => {
+            resolve(res === true);
+          });
         });
-      });
+      } else {
+        // fallback: plain text (for offline cache, if not hashed)
+        passwordMatch = userDoc.password === password;
+      }
 
       if (!passwordMatch) {
         setError("Invalid username or password. Please try again.");
         setSnackbarOpen(true);
+        setLoading(false);
         return;
       }
 
